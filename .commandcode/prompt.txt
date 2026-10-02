@@ -1,0 +1,4 @@
+
+from .commandcode/req.txt, generate a detailed spec.md
+
+from spec.md, generate a detailed plan.md

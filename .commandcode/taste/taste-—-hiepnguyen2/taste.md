@@ -1,0 +1,8 @@
+# Taste — hiepnguyen2
+- Uses a `.commandcode/` directory as a staging area for requests: requirements live in `req.txt`, the command itself lives in `.commandcode/prompt.txt`, and new commands supersede the previous one. Expects the agent to read the referenced file rather than ask for its contents. Confidence: 0.8
+- Follows a staged spec-then-plan pipeline (`req.txt` → `spec.md` → `plan.md`), asking for exactly one downstream artifact per turn and building the project forward from it. Confidence: 0.8
+- Writes very terse, imperative one-line prompts that name an input file and a target output file ("from X, generate a detailed Y"), and drops the IDE-context scaffolding when the file is already established. Infer scope from available context and proceed without clarifying questions or restating the task. Confidence: 0.85
+- Escalates to bare execution verbs once a plan exists ("implement plan.md") and expects the whole plan carried out end-to-end in one turn — scaffold, source, tests, live verification — with no intermediate approval gate. Finish the work, verify it, and report; don't stop to ask whether to proceed to the next step. Confidence: 0.8
+- Explicitly asks for "detailed" generated documents and accepts long, dense output without trimming. Confidence: 0.8
+- Prefers comprehensive, heavily structured engineering documents: numbered sections, requirement/ID tables, ASCII dependency or architecture diagrams, per-item verification commands, risk and open-question tables, and explicit out-of-scope sections. Confidence: 0.8
+- Expects downstream documents to cite sections of the upstream document by number when justifying decisions. Confidence: 0.7

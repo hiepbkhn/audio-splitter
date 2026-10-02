@@ -1,0 +1,20 @@
+[project]
+name = "audio-splitter"
+version = "0.1.0"
+description = "Gradio app that splits an MP3 at user-supplied time points."
+requires-python = ">=3.10"
+dependencies = [
+    "gradio>=5.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+markers = [
+    "ffmpeg: integration test that shells out to ffmpeg (deselect with -m 'not ffmpeg')",
+]
