@@ -310,3 +310,41 @@ def test_very_short_final_segment_is_encoded_rather_than_dropped(tone_mp3):
     assert len(result.paths) == 2
     assert result.paths[1].exists()
     assert result.paths[1].stat().st_size > 0
+
+def test_pre_parsed_points_and_names_bypass_the_textboxes(tone_mp3):
+    """The paired UI mode hands parsed values straight in; both textboxes are ignored."""
+    result = split_audio(
+        tone_mp3, "00:07", "wrong.mp3\nalso-wrong.mp3\nthird-wrong.mp3",
+        points_ms=[3_000], names=["First", "Second"],
+    )
+    assert result.names == ["First.mp3", "Second.mp3"]
+    assert len(result.paths) == 2
+
+
+def test_pre_parsed_names_survive_a_comma_that_a_textbox_would_split_on(tone_mp3):
+    """Re-serialising names into a textbox would split 'a, b' into two entries."""
+    result = split_audio(
+        tone_mp3, "00:05", "", points_ms=[3_000], names=["Smith, John", "Intro"]
+    )
+    assert result.names == ["Smith, John.mp3", "Intro.mp3"]
+    assert result.paths[0].exists()
+
+
+def test_pre_parsed_names_survive_a_leading_hash(tone_mp3):
+    """A '#' name is a comment in a textbox, so it must never round-trip through one."""
+    result = split_audio(
+        tone_mp3, "00:05", "", points_ms=[3_000], names=["#1 hit", "Intro"]
+    )
+    assert result.names == ["#1 hit.mp3", "Intro.mp3"]
+
+
+def test_pre_parsed_points_are_still_validated_against_the_duration(tone_mp3):
+    with pytest.raises(SplitError) as exc:
+        split_audio(tone_mp3, "", "", points_ms=[60_000], names=["Late"])
+    assert exc.value.code == "E_TIME_PAST_END"
+
+
+def test_pre_parsed_names_must_match_the_segment_count(tone_mp3):
+    with pytest.raises(SplitError) as exc:
+        split_audio(tone_mp3, "", "", points_ms=[3_000, 6_000], names=["Only one"])
+    assert exc.value.code == "E_NAME_COUNT"

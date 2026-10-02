@@ -6,11 +6,13 @@ Gradio app that splits an uploaded MP3 at user-supplied time points and returns 
 
 ## 1. Overview
 
-A single-page Gradio application takes three inputs:
+A single-page Gradio application takes one MP3 audio file plus a description of where the
+segments begin and what to call them. That description can be given in either of two shapes,
+selected in the UI (§7.2, §7.3):
 
-1. one MP3 audio file,
-2. an ordered list of time points to split at,
-3. an optional list of output file names.
+1. an ordered list of time points to split at, with an optional parallel list of output
+   names, or
+2. one `start time + name` line per segment.
 
 It writes one audio file per resulting segment and returns them to the browser as downloads. When no output names are given, segments are named after their source file and indexed by the time range they cover.
 
@@ -48,6 +50,9 @@ With `n` split points the output always contains exactly `n + 1` segments.
 - **US-2** — As a user, I supply four names so I get `intro.mp3`, `verse.mp3`, `chorus.mp3`, `outro.mp3` instead of the default indexed names.
 - **US-3** — As a user, I mistype a split point as `5:70`; I get an error naming the offending entry and telling me a minute value must be below 60.
 - **US-4** — As a user, I hand back files that together play identically to the source, with no audible click at the boundaries beyond MP3 frame granularity.
+- **US-5** — As a user, I paste a chapter list of `start time + name` lines and receive one
+  correctly named file per chapter, without working out the off-by-one between lines and
+  segments myself.
 
 ## 6. Functional requirements
 
@@ -57,12 +62,13 @@ With `n` split points the output always contains exactly `n + 1` segments.
 | FR-2 | Parse a list of split points into ordered milliseconds. |
 | FR-3 | Reject split points that are unparseable, non-strictly increasing, non-positive, or at/after the source duration. |
 | FR-4 | Accept an optional list of output names; when absent, generate names from the source stem and segment time range. |
-| FR-5 | Require the name count to equal `n + 1` when names are provided. |
+| FR-5 | Require the name count to equal the segment count when names are provided. |
 | FR-6 | Sanitise user-supplied names so the result is a safe, unique filename. |
 | FR-7 | Encode each segment to MP3 via ffmpeg, preserving the source sample rate and channel count. |
 | FR-8 | Write all segments into one temporary directory and return every file. |
 | FR-9 | Surface every validation failure in one message, not one per run. |
 | FR-10 | Leave the source file untouched and delete nothing the user owns. |
+| FR-11 | Accept the same split described either as separate points and names, or as one `time + name` line per segment (§7.3). |
 
 ## 7. Input specification
 
@@ -108,15 +114,54 @@ No unit suffixes (`5m`, `90s`) are accepted — they are rejected rather than gu
 
 **Last segment.** The final segment always runs from the last split point to the end of the source. A trailing point near the duration (`duration − 0.05 s`) is legal and produces a very short final segment; ffmpeg encodes it rather than dropping it.
 
-### 7.3 Output names
+### 7.3 Paired times and names
 
-Optional `Textbox`, same line/blank/comment rules as split points.
+The `Time + name per line` mode encodes both in one `Textbox`, one segment per line, as in
+§5 US-5:
+
+```
+00:00 Đàn Gà Trong Sân
+03:12 Con Cò Bé Bé
+28:49 Bụi Phấn
+```
+
+- **Separator.** The first whitespace-delimited token is the time; the remainder of the line,
+  trimmed, is the name. A space or a tab both work, so a list pasted from a column-aligned
+  table parses unchanged. Unlike §7.2, `,` and `;` are **not** separators — a name may
+  contain them.
+- **Blank lines and `#` comments** are dropped, as in §7.2.
+- **`n` lines produce `n` segments.** Each line names the segment *starting* at its time, so
+  the count is lines, not lines + 1.
+- **The first line's time is a label, not a cut.** The audio begins at zero by definition, so
+  the first row cannot be a split point. Dropping it is what allows a list to open with the
+  natural `00:00` marker, which §7.2 rejects with `E_TIME_RANGE` because it would produce an
+  empty first segment. The first row's value is not otherwise constrained: listing from a
+  chapter that does not begin the recording is normal, so a non-zero first time is accepted.
+- **Every line must carry a name.** A bare timestamp is `E_TIME_FORMAT`, because the names are
+  the reason this mode exists and a nameless line would silently produce an unnamed segment.
+- **Remaining times must strictly increase**, checked against their predecessor as in §7.2,
+  with the row numbers in error messages referring to their position in this list. `E_TIME_RANGE`
+  is raised for a non-positive value, matching §7.2.
+
+**Count.** The 99-cut ceiling in §7.2 applies to the *cuts*, so at most 100 lines.
+
+### 7.4 Output names
+
+Optional, and shared by all three modes. Same line/blank/comment rules as split points when
+typed into the `Output names` box.
 
 - If empty or absent → default naming (§8.2).
-- If present → exactly `n + 1` entries, else `E_NAME_COUNT`.
-- Each name is used as a **base name**; a `.mp3` extension is appended if the user did not include one. A name with any other extension is rejected outright (`E_NAME_EXTENSION`) rather than silently producing an MP3 called `foo.wav`.
-- A **blank** entry is a "use the default for this segment" signal, not a missing extension, so it falls back to §8.2 naming rather than erroring.
-- Sanitisation (`E_NAME_UNSAFE` is not raised; unsafe input is repaired silently, because the user's intent is unambiguous):
+- If present → exactly one entry per segment, else `E_NAME_COUNT`.
+- Each name is used as a **base name**. A `.mp3` extension is appended when the user omits it,
+  so `Đàn Gà Trong Sân` and `Đàn Gà Trong Sân.mp3` mean the same thing. A name carrying any
+  *other* extension is rejected outright (`E_NAME_EXTENSION`) rather than silently producing
+  an MP3 called `foo.wav`.
+- The extension is judged on the **raw entry, before sanitisation**: `in/tro.wav` is rejected
+  even though stripping the `/` would leave a harmless-looking `intro.wav`.
+- A **blank** entry is a "use the default for this segment" signal, not a missing extension,
+  so it falls back to §8.2 naming rather than erroring.
+- Sanitisation (`E_NAME_UNSAFE` is not raised; unsafe input is repaired silently, because the
+  user's intent is unambiguous):
   - path separators (`/`, `\`) and `..` are stripped — names are files in a temp dir, never paths,
   - control characters and `<>:"|?*` are removed,
   - leading/trailing whitespace and dots are trimmed (Windows rejects trailing dots),
@@ -125,6 +170,10 @@ Optional `Textbox`, same line/blank/comment rules as split points.
   - the name is truncated so the full filename fits in 255 bytes on a UTF-8 filesystem.
 
 - Duplicates are repaired by appending `_2`, `_3`, … before the extension (`intro.mp3`, `intro_2.mp3`). User-visible as a note, not an error.
+
+**Reported repairs.** Only a change the user could not have predicted becomes a note.
+Appending `.mp3` is the documented default and stays silent; stripping an illegal character,
+prefixing a reserved name, and de-duplicating are all reported.
 
 ## 8. Output specification
 
@@ -201,8 +250,8 @@ Every failure is a `SplitError` carrying a code, a human-readable message, and t
 | `E_TIME_RANGE` | Value ≤ 0 | "Split point {i} ({value}) must be greater than 00:00:00." |
 | `E_TIME_ORDER` | Not strictly increasing | "Split point {i} ({value}) is not after split point {i−1} ({prev})." |
 | `E_TIME_PAST_END` | Value ≥ duration | "Split point {i} ({value}) is at or past the end of the audio ({duration})." |
-| `E_NAME_COUNT` | Names ≠ n+1 | "Expected {expected} output names for {expected} segments; got {got}." |
-| `E_NAME_EXTENSION` | Extension not `.mp3` | "Output name {i} ('{raw}') must end in .mp3." |
+| `E_NAME_COUNT` | Names ≠ segment count | "Expected {expected} output names for {expected} segments; got {got}." |
+| `E_NAME_EXTENSION` | Extension present but not `.mp3` | "Output name {i} ('{raw}') must end in .mp3, or have no extension." |
 | `E_FFMPEG_MISSING` | ffmpeg/ffprobe not on PATH | "ffmpeg is required but was not found on PATH." |
 | `E_FFMPEG_FAILED` | Any segment encode fails | "Failed to encode segment {i} ({start}–{end}): {stderr tail}" |
 
@@ -219,17 +268,24 @@ Gradio `Blocks`, vertical layout, `title="Audio Splitter"`.
 | Row | Component | Type | Notes |
 | --- | --- | --- | --- |
 | 1 | Source audio | `Audio` | `type="filepath"`, `label="Source MP3"`. Shows duration and lets the user scrub before splitting. |
-| 2 | Split points | `Textbox` | `lines=8`, monospace, placeholder `00:05:00\n00:12:30\n00:30:00`. |
-| 3 | Output names | `Textbox` | `lines=6`, optional, placeholder `intro\nverse\nchorus\noutro`. |
-| 4 | Advanced | `Expander` | Checkbox "Stream copy (fast, frame-aligned only)"; checkbox "Keep temporary files for inspection". |
-| 5 | Split | `Button` | `variant="primary"`. |
-| 6 | Result | `Markdown` | Preview: segment count, each segment's duration, actual filename, and any repaired names. |
-| 7 | Files | `File` | `file_count="multiple"`, `label="Segments"`. |
-| 8 | Archive | `File` | Optional ZIP of all segments, for one-shot download of a many-segment split. |
-| 9 | Status | `Markdown` | Success or the error block. |
+| 2 | Input format | `Radio` | Three modes: points only, points + names, or `time + name` per line. Defaults to points + names. |
+| 3 | Split points | `Textbox` | `lines=8`, placeholder `00:05:00\n00:12:30\n00:30:00`. Hidden in paired mode. |
+| 4 | Output names | `Textbox` | `lines=6`, optional, placeholder `intro\nverse\nchorus\noutro`. Hidden in paired mode. |
+| 5 | Times and names | `Textbox` | `lines=10`, placeholder `00:00 Đàn Gà Trong Sân\n03:12 Con Cò Bé Bé`. Hidden unless paired mode is selected. |
+| 6 | Advanced | `Expander` | Checkbox "Stream copy (fast, frame-aligned only)"; checkbox "Keep temporary files for inspection". |
+| 7 | Split | `Button` | `variant="primary"`. |
+| 8 | Result | `Markdown` | Preview: segment count, each segment's duration, actual filename, and any repaired names. |
+| 9 | Files | `File` | `file_count="multiple"`, `label="Segments"`. |
+| 10 | Archive | `File` | Optional ZIP of all segments, for one-shot download of a many-segment split. |
+| 11 | Status | `Markdown` | Success or the error block. |
 
 Behaviour:
 
+- Changing the **Input format** radio shows only the textboxes the selected mode reads, so a
+  value pasted into a box the mode ignores cannot look like it was accepted.
+- Mode values are **strings** (`points`, `points_and_names`, `timed_names`) rather than ints,
+  because Gradio round-trips the radio value through JSON where a bare integer is ambiguous
+  with a component index.
 - Clicking **Split** with a non-MP3 or no file is rejected client-side by `Audio`'s own `type` constraint before hitting the handler.
 - The handler never raises; every failure path returns a rendered error block and leaves previously returned files untouched.
 - `gr.Examples` provides three demo cases so the accepted time formats are discoverable without an upload.
@@ -245,7 +301,7 @@ audio-splitter/
 ├── splitter/
 │   ├── __init__.py
 │   ├── errors.py          # SplitError, error codes, message templates, stderr_tail
-│   ├── timeparse.py       # parse_split_points -> list[int] (ms), format helpers
+│   ├── timeparse.py       # parse_split_points, parse_timed_names -> list[int] (ms), format helpers
 │   ├── naming.py          # sanitize_name, default_name, apply_names
 │   ├── probe.py           # is_mp3, probe -> MediaInfo, ensure_ffmpeg_available
 │   ├── plan.py            # build_plan(duration_ms, points_ms) -> [Segment]
@@ -260,6 +316,13 @@ audio-splitter/
     ├── test_app.py        # handler + Blocks wiring
     └── test_hardening.py  # concurrency, temp hygiene, injection safety
 ```
+
+`split_audio` accepts either text (`points_text`, `names_text`) or already-parsed values
+(`points_ms`, `names`), with the parsed values taking precedence. The paired mode uses the
+latter: re-serialising its names into the names textbox would be lossy, since a name
+containing `,` or `;` would be split on the entry separators and one starting with `#` would
+be dropped as a comment. Parsing once and passing the list through keeps the name the user
+typed.
 
 Separation of concerns: `timeparse`, `naming`, and `plan` are pure functions over ints and strings — fully unit-testable with no ffmpeg. `probe` and `split` are the only ffmpeg-touching modules, so integration tests carry `@pytest.mark.ffmpeg` and `-m "not ffmpeg"` runs the fast lane.
 

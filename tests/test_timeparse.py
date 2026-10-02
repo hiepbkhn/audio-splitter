@@ -1,7 +1,30 @@
 import pytest
 
 from splitter.errors import SplitError
-from splitter.timeparse import format_clock, format_ms, iter_entries, parse_split_points, parse_time
+from splitter.timeparse import (
+    format_clock,
+    format_ms,
+    iter_entries,
+    parse_split_points,
+    parse_time,
+    parse_timed_names,
+)
+
+CHAPTERS = "\n".join(
+    [
+        "00:00 Đàn Gà Trong Sân",
+        "03:12 Con Cò Bé Bé",
+        "06:18 Chị Ong Nâu Và Em Bé",
+        "09:13 Con Chim Vành Khuyên",
+        "12:18 Rửa Mặt Như Mèo",
+        "14:57 Cá Vàng Bơi",
+        "17:29 Một Con Vịt",
+        "19:46 Hổng Dám Đâu",
+        "22:35 Đội Kèn Tí Hon",
+        "25:23 Bài Học Đầu Tiên",
+        "28:49 Bụi Phấn",
+    ]
+)
 
 
 @pytest.mark.parametrize(
@@ -104,3 +127,83 @@ def test_more_than_ninety_nine_points_is_rejected():
 def test_ninety_nine_points_is_allowed():
     text = "\n".join(str(i) for i in range(1, 100))
     assert len(parse_split_points(text)) == 99
+
+
+def test_timed_names_yields_one_name_per_segment():
+    points, names = parse_timed_names(CHAPTERS)
+    assert names[0] == "Đàn Gà Trong Sân"
+    assert names[-1] == "Bụi Phấn"
+    # 11 lines -> 11 segments -> 10 cut points, since the first line starts the audio.
+    assert len(points) == 10
+    assert points[0] == 192_000  # 03:12
+    assert points[-1] == 1_729_000  # 28:49
+
+
+def test_a_leading_zero_is_a_name_row_not_a_split_point():
+    """The whole point of this mode: '00:00 <name>' must not trip the zero-value rule."""
+    points, names = parse_timed_names("00:00 First\n00:03 Second\n00:07 Third")
+    assert points == [3_000, 7_000]
+    assert names == ["First", "Second", "Third"]
+
+
+def test_a_single_line_produces_one_segment_and_no_points():
+    points, names = parse_timed_names("00:00 Only")
+    assert points == []
+    assert names == ["Only"]
+
+
+def test_timed_names_keeps_whitespace_inside_a_name():
+    points, names = parse_timed_names("00:00 A  B\tC")
+    assert names == ["A  B\tC"]
+
+
+def test_timed_names_accepts_tabs_and_padding_between_time_and_name():
+    spaced = parse_timed_names("00:00 One\n00:03 Two")
+    tabbed = parse_timed_names("00:00\tOne\n00:03\tTwo")
+    padded = parse_timed_names("00:00    One\n00:03      Two")
+    assert spaced == tabbed == padded
+
+
+def test_timed_names_drops_blanks_and_comments():
+    points, names = parse_timed_names("# chapters\n\n00:00 One\n\n   \n00:03 Two")
+    assert points == [3_000]
+    assert names == ["One", "Two"]
+
+
+def test_timed_names_rejects_an_empty_list():
+    with pytest.raises(SplitError) as exc:
+        parse_timed_names("# nothing\n\n")
+    assert exc.value.code == "E_NO_SPLITS"
+
+
+def test_timed_names_rejects_a_bad_time_naming_the_line():
+    with pytest.raises(SplitError) as exc:
+        parse_timed_names("00:00 One\n5m Two\nnope Three")
+    assert exc.value.code == "E_TIME_FORMAT"
+    assert len(exc.value.message.splitlines()) == 2
+
+
+def test_timed_names_rejects_a_line_with_no_name():
+    with pytest.raises(SplitError) as exc:
+        parse_timed_names("00:00 One\n00:03")
+    assert exc.value.code == "E_TIME_FORMAT"
+
+
+def test_timed_names_rejects_out_of_order_times_against_their_predecessor():
+    with pytest.raises(SplitError) as exc:
+        parse_timed_names("00:00 One\n00:05 Later\n00:02 Earlier")
+    assert exc.value.code == "E_TIME_ORDER"
+    assert "00:00:02.000" in exc.value.message
+
+
+def test_timed_names_rejects_a_repeated_time():
+    with pytest.raises(SplitError) as exc:
+        parse_timed_names("00:00 One\n00:03 Two\n00:03 Three")
+    assert exc.value.code == "E_TIME_ORDER"
+
+
+def test_timed_names_rejects_more_than_ninety_nine_cuts():
+    text = "\n".join(f"{i // 60:02d}:{i % 60:02d} Name{i}" for i in range(101))
+    with pytest.raises(SplitError) as exc:
+        parse_timed_names(text)
+    assert exc.value.code == "E_SPLIT_COUNT"

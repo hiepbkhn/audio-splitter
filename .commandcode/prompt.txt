@@ -2,3 +2,16 @@
 from .commandcode/req.txt, generate a detailed spec.md
 
 from spec.md, generate a detailed plan.md
+
+add UI to accept list of pairs (time split, file name) as in following example (starting time of each split)
+00:00 Đàn Gà Trong Sân
+03:12 Con Cò Bé Bé
+06:18 Chị Ong Nâu Và Em Bé
+09:13 Con Chim Vành Khuyên
+12:18 Rửa Mặt Như Mèo
+14:57 Cá Vàng Bơi
+17:29 Một Con Vịt
+19:46 Hổng Dám Đâu
+22:35 Đội Kèn Tí Hon
+25:23 Bài Học Đầu Tiên
+28:49 Bụi Phấn

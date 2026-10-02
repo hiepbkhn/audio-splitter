@@ -53,28 +53,37 @@ def split_audio(
     points_text: str,
     names_text: str = "",
     options: SplitOptions | None = None,
+    points_ms: list[int] | None = None,
+    names: list[str] | None = None,
 ) -> SplitResult:
     """Split `source` at the points in `points_text`, writing segments to a temp directory.
 
     Validation happens in full before a single file is written, and a failure at any point
     leaves nothing behind but the (already populated) temp directory.
+
+    `points_ms` and `names` accept input that is already parsed, which is how the
+    "time + name per line" UI mode is served: those lines are parsed once by
+    `parse_timed_names` and handed straight through, instead of being re-serialised into the
+    two textboxes and read back. A name containing a comma or a leading `#` would not
+    survive that round trip. When either is given it takes precedence over the
+    corresponding text argument.
     """
     options = options or SplitOptions()
     ensure_ffmpeg_available()
 
     path = _validate_source(source)
-    points_ms = _parse_points(points_text)
+    points = points_ms if points_ms is not None else _parse_points(points_text)
     info = probe(path)
-    validate_points_against_duration(points_ms, info.duration_ms)
+    validate_points_against_duration(points, info.duration_ms)
 
-    segments = build_plan(info.duration_ms, points_ms)
-    names, notes = _resolve_names(names_text, segments, path.stem)
+    segments = build_plan(info.duration_ms, points)
+    final_names, notes = _resolve_names(names_text, segments, path.stem, names)
 
     temp_dir = Path(tempfile.mkdtemp(prefix="audio-split-"))
     try:
         paths = [
             _encode_segment(path, temp_dir / name, segment, info, options)
-            for segment, name in zip(segments, names)
+            for segment, name in zip(segments, final_names)
         ]
     except Exception:
         # A partial file set is worse than an error, so a failed run leaves nothing behind
@@ -85,7 +94,7 @@ def split_audio(
 
     return SplitResult(
         segments=segments,
-        names=names,
+        names=final_names,
         paths=paths,
         notes=notes,
         temp_dir=temp_dir,
@@ -111,13 +120,18 @@ def _parse_points(points_text: str) -> list[int]:
 
 
 def _resolve_names(
-    names_text: str, segments: list[Segment], stem: str
+    names_text: str,
+    segments: list[Segment],
+    stem: str,
+    names: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return the final filename per segment plus any repairs made, defaulting when empty."""
-    raw_names = [raw for _, raw in iter_entries(names_text or "")]
+    supplied = names if names is not None else [
+        raw for _, raw in iter_entries(names_text or "")
+    ]
     starts = [segment.start_ms for segment in segments]
     ends = [segment.end_ms for segment in segments]
-    if not raw_names:
+    if not supplied:
         return (
             [
                 default_name(stem, segment.index, segment.start_ms, segment.end_ms)
@@ -125,7 +139,7 @@ def _resolve_names(
             ],
             [],
         )
-    return apply_names(raw_names, len(segments), stem, starts, ends)
+    return apply_names(supplied, len(segments), stem, starts, ends)
 
 
 def _encode_segment(

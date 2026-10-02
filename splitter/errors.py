@@ -70,7 +70,7 @@ USER_MESSAGE: dict[str, str] = {
         "Split point {index} ({value}) is at or past the end of the audio ({duration})."
     ),
     "E_NAME_COUNT": "Expected {expected} output names for {expected} segments; got {got}.",
-    "E_NAME_EXTENSION": "Output name {index} ('{raw}') must end in .mp3.",
+    "E_NAME_EXTENSION": "Output name {index} ('{raw}') must end in .mp3, or have no extension.",
     "E_FFMPEG_MISSING": "ffmpeg is required but was not found on PATH.",
     "E_FFMPEG_FAILED": "Failed to encode segment {index} ({start}-{end}).",
 }

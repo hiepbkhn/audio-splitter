@@ -15,6 +15,7 @@ _RESERVED_NAMES = frozenset(
     | {f"LPT{i}" for i in range(1, 10)}
 )
 _ILLEGAL_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+_EXTENSION_RE = re.compile(r"\.[A-Za-z0-9]+$")
 
 
 def sanitize_name(raw: str, fallback: str) -> str:
@@ -63,15 +64,36 @@ def apply_names(
 
     for position, raw in enumerate(raw_names):
         index = position + 1
-        fallback = default_name(stem, index, starts[position], ends[position])
+        entry = raw.strip()
         # A blank entry is a "use the default" signal, not a missing extension.
-        name = fallback if not raw.strip() else sanitize_name(raw.strip(), fallback)
-
-        if name != raw.strip():
-            notes.append(f"Output name {index}: '{raw.strip()}' -> '{name}'.")
-        elif not name.lower().endswith(".mp3"):
-            errors.append(fail("E_NAME_EXTENSION", index=index, raw=raw.strip()))
+        if not entry:
+            names.append(default_name(stem, index, starts[position], ends[position]))
             continue
+
+        # The extension is judged on what the user typed, before sanitising: "in/tro.wav"
+        # has a forbidden extension even though stripping the separator would leave a name
+        # that merely looks harmless.
+        extension = _EXTENSION_RE.search(entry)
+        if extension and extension.group().lower() != ".mp3":
+            errors.append(fail("E_NAME_EXTENSION", index=index, raw=entry))
+            continue
+
+        fallback = default_name(stem, index, starts[position], ends[position])
+        # A name written without an extension gets ".mp3" appended, so "Bui Phan" and
+        # "Bui Phan.mp3" mean the same thing rather than one being an error.
+        candidate = entry if extension else f"{entry}.mp3"
+        name = sanitize_name(candidate, fallback)
+        if not name.lower().endswith(".mp3"):
+            # Sanitising can strip the extension itself, as it does for ".mp3" or "...".
+            # The documented fallback for a name with nothing left is the default for this
+            # index, and every output is an MP3, so an extensionless name is not a result.
+            name = fallback
+            notes.append(f"Output name {index}: '{entry}' -> '{name}'.")
+        elif name != candidate:
+            # Only a repair the user could not have predicted is worth reporting. Adding
+            # ".mp3" is the documented default and stays silent; stripping a separator or
+            # de-duplicating changes the name in a way the user did not type.
+            notes.append(f"Output name {index}: '{entry}' -> '{name}'.")
 
         seen = used.get(name.lower(), 0) + 1
         used[name.lower()] = seen

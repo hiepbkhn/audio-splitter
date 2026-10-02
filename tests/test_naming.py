@@ -65,10 +65,61 @@ def test_apply_names_rejects_a_mismatched_count():
     assert "Expected 3" in exc.value.message
 
 
+def test_apply_names_appends_mp3_to_a_name_written_without_an_extension():
+    """Spec 7.3: '.mp3' is appended when the user did not include one."""
+    names, notes = apply_names(["intro", "verse"], 2, "song", [0, 1000], [1000, 2000])
+    assert names == ["intro.mp3", "verse.mp3"]
+    # Appending the documented extension is not a repair worth reporting.
+    assert notes == []
+
+
 def test_apply_names_rejects_a_non_mp3_extension():
     with pytest.raises(SplitError) as exc:
         apply_names(["intro.wav", "verse.mp3"], 2, "song", [0, 1000], [1000, 2000])
     assert exc.value.code == "E_NAME_EXTENSION"
+
+
+def test_apply_names_appends_mp3_to_non_ascii_names():
+    names, _ = apply_names(["Đàn Gà Trong Sân"], 1, "song", [0], [1000])
+    assert names == ["Đàn Gà Trong Sân.mp3"]
+
+
+def test_apply_names_accepts_a_name_that_is_already_mp3():
+    names, notes = apply_names(["intro.mp3"], 1, "song", [0], [1000])
+    assert names == ["intro.mp3"]
+    assert notes == []
+
+
+def test_apply_names_accepts_an_uppercase_mp3_extension():
+    names, _ = apply_names(["intro.MP3"], 1, "song", [0], [1000])
+    assert names == ["intro.MP3"]
+
+
+def test_apply_names_rejects_a_forbidden_extension_hidden_behind_a_separator():
+    """'in/tro.wav' must not slip through just because sanitising strips the '/'."""
+    with pytest.raises(SplitError) as exc:
+        apply_names(["in/tro.wav"], 1, "song", [0], [1000])
+    assert exc.value.code == "E_NAME_EXTENSION"
+
+
+def test_apply_names_keeps_a_dot_that_is_not_an_extension():
+    names, _ = apply_names(["vol. one"], 1, "song", [0], [1000])
+    assert names == ["vol. one.mp3"]
+
+
+@pytest.mark.parametrize("raw", [".mp3", "...", "/", ".."])
+def test_a_name_that_sanitises_to_nothing_falls_back_to_the_default(raw):
+    """Appending '.mp3' must not leave an extensionless file behind."""
+    names, notes = apply_names([raw], 1, "song", [0], [1000])
+    assert names == ["song_part01_00-00-00.000_00-00-01.000.mp3"]
+    assert notes, "falling back to the default name is a change the user must see"
+
+
+def test_every_produced_name_is_an_mp3():
+    """The contract: whatever the user types, the output is an MP3 or an error."""
+    raw = [".mp3", "bare", "with.mp3", "in/tro", "vol. one", "Con", "#1", "Đàn Gà"]
+    names, _ = apply_names(raw, len(raw), "song", [0] * len(raw), [1000] * len(raw))
+    assert all(name.lower().endswith(".mp3") for name in names)
 
 
 def test_apply_names_reports_every_bad_extension_at_once():

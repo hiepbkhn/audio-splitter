@@ -107,6 +107,99 @@ def parse_split_points(text: str) -> list[int]:
     return values
 
 
+def parse_timed_names(text: str) -> tuple[list[int], list[str]]:
+    """Parse "start time + segment name" lines into split points and output names.
+
+    Each line is a time followed by the name of the segment starting there, separated by a
+    space or a tab, as in::
+
+        00:00 Đàn Gà Trong Sân
+        03:12 Con Cò Bé Bé
+
+    Because the times mark where each *segment starts*, the first line's time is
+    informational only — the audio always begins at zero, so it cannot be a cut. Only the
+    remaining lines contribute split points, which is what lets a list begin with the
+    natural ``00:00`` marker instead of tripping the "a point must be greater than zero"
+    rule that the separate-points mode enforces.
+
+    ``n`` lines therefore produce ``n`` named segments, the last running to the end of the
+    audio. Every line must carry a name: a bare time is rejected rather than accepted as an
+    unnamed segment, because in this mode the names are the point of the list.
+
+    Returns the split points and one raw name per segment, in order. Sanitising and
+    de-duplicating the names is `apply_names`' job.
+    """
+    rows = _timed_name_rows(text or "")
+    if not rows:
+        raise fail("E_NO_SPLITS")
+
+    errors: list[SplitError] = []
+    starts: list[int] = []
+    names: list[str] = []
+
+    for index, (_, raw_time, name) in enumerate(rows, start=1):
+        if not name:
+            errors.append(fail("E_TIME_FORMAT", index=index, raw=raw_time))
+            continue
+        try:
+            starts.append(parse_time(raw_time))
+        except SplitError:
+            errors.append(fail("E_TIME_FORMAT", index=index, raw=raw_time))
+            continue
+        names.append(name)
+
+    if errors:
+        raise _combined(errors)
+
+    # The first row starts the audio rather than cutting it, so its time is dropped. Any
+    # first-row value is accepted, since listing from a chapter that does not begin the
+    # recording is a normal thing to do and the value is only a label in this mode.
+    points = starts[1:]
+
+    if len(points) > MAX_SPLIT_POINTS:
+        errors.append(fail("E_SPLIT_COUNT", count=len(points), limit=MAX_SPLIT_POINTS))
+
+    for position, value in enumerate(points):
+        if value <= 0:
+            # Unreachable via the ordering check below, since a zero is never strictly
+            # greater than its predecessor. Checked anyway so a repeated "00:00" is
+            # reported as the out-of-range value it is, matching parse_split_points.
+            errors.append(
+                fail("E_TIME_RANGE", index=position + 2, value=format_clock(value))
+            )
+        elif value <= starts[position]:
+            errors.append(
+                fail(
+                    "E_TIME_ORDER",
+                    index=position + 2,
+                    value=format_clock(value),
+                    previous_index=position + 1,
+                    previous_value=format_clock(starts[position]),
+                )
+            )
+
+    if errors:
+        raise _combined(errors)
+
+    return points, names
+
+
+def _timed_name_rows(text: str) -> list[tuple[int, str, str]]:
+    """Split paired lines into (line number, time, name), dropping blanks and comments.
+
+    The time is taken as the first whitespace-delimited token, so a list aligned with tabs
+    or padded columns parses the same as one separated by single spaces.
+    """
+    rows: list[tuple[int, str, str]] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split(maxsplit=1)
+        rows.append((number, parts[0], parts[1].strip() if len(parts) > 1 else ""))
+    return rows
+
+
 def _combined(errors: list[SplitError]) -> SplitError:
     """Fold several validation failures into one SplitError carrying every message."""
     return SplitError(
